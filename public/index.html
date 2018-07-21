@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Remote Control</title>
+    <link rel="icon" href="/icons/DocumentsFolder.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/css/bootstrap.min.css" integrity="sha384-9gVQ4dYFwwWSjIDZnLEWnxCjeSWFphJiwGPXr1jddIhOegiu1FwO5qRGvFXOdJZ4"
+        crossorigin="anonymous">
+</head>
+
+<body>
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
+        crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.0/umd/popper.min.js" integrity="sha384-cs/chFZiN24E4KMATLdqdvsezGxaGsi4hLGOzlXwp5UZB1LY//20VyM2taTB4QvJ"
+        crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/js/bootstrap.min.js" integrity="sha384-uefMccjFJAIv6A+rW+L4AHf99KvxDjWSu1z9VI8SKNVmz4sk7buKt/6v9KI65qnm"
+        crossorigin="anonymous"></script>
+    <br/>
+
+    <div class="container border border-dark rounded bg-light">
+        <form>
+            <div class="form-group m-3">
+                <div class="row">
+                    <div class="media">
+                        <img src="/icons/Network-Remote-Control-icon.png" class="align-self-end" style="height: 48px;width: 48px;">
+                        <div class="media-body align-self-end">
+                            <h2 class="mt-0">Remote Control</h2>
+                        </div>
+                    </div>
+                </div>
+                <hr/>
+
+                <div class="row">
+                    <div id="RecDeviceDisplay" class="mt-0"></div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-10">
+                        <h3>Change Volume</h3>
+                        <b>
+                            Volume:
+                            <input type="range" onchange="changeVolume(this.value)" min="0" max="100" id="volumeSlider"></input>
+                            <input type="text" id="volumeText"></input>
+                        </b>
+                    </div>
+                </div>
+
+                <!-- <div class="row ">
+                    <div class="col-md-auto">
+                        <button type="button" class="btn btn-primary" onclick="runAnnotation();" id="startBtn" value="Start Audio">
+                            <img src="/icons/ic_play_arrow_black_24px.svg" /> Update
+                        </button>
+                    </div>
+                </div> -->
+                <div class="row ">
+                    <div class="col-md-10">
+                        <h2>output</h2>
+                        <textarea class="form-control rta" id="output"></textarea>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+    <script type="text/javascript">
+       document.onload = updateVolume();
+
+        function changeVolume(slideValue) {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    jObj = JSON.parse(this.responseText);
+                    document.getElementById("volumeSlider").value = jObj.volume
+                    document.getElementById("volumeText").value = jObj.volume
+                }
+            };
+            //var volumeVal = document.getElementById("volumeSlider").value;
+            xhttp.open("POST", "http://" + window.location.host + "/set-volume", true);
+            xhttp.setRequestHeader("Content-type", "application/json");
+
+            message = {
+                "volume": slideValue,
+            }
+            xhttp.send(JSON.stringify(message));
+        }
+
+        function updateVolume() {
+            var xhttp1 = new XMLHttpRequest();
+
+            xhttp1.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    jObj = JSON.parse(this.responseText);
+                    document.getElementById("volumeSlider").value = jObj.volume
+                    document.getElementById("volumeText").value = jObj.volume
+                }
+            };
+            xhttp1.open("GET", "http://" + window.location.host + "/get-volume");
+            xhttp1.send();
+        }
+
+        function runAnnotation() {
+            var text = document.getElementById("inputText").value;
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById("output").value =
+                        this.responseText;
+                }
+            };
+
+            xhttp.open("POST", "http://" + window.location.host + "/extract-symptoms", true);
+            xhttp.setRequestHeader("Content-type", "application/json");
+
+            var age = parseInt(document.getElementById("ageSelector").value);
+            var gender = document.getElementById("genderSelector").value;
+            var laterality = document.getElementById("lateralitySelector").value;
+
+            message = {
+                "text": text,
+                "verify": {
+                    "gender": gender,
+                    "laterality": laterality,
+                    "age": age,
+                    "height": 1.78,
+                    "weight": 80
+                },
+                "actions": ["parse", "verify", "quality"]
+            }
+            xhttp.send(JSON.stringify(message));
+        }
+    </script>
+</body>
+
+</html>
