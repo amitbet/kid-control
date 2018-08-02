@@ -17,14 +17,15 @@
 
     <script src="https://unpkg.com/vue"></script>
     <!-- <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
-        crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.0/umd/popper.min.js" integrity="sha384-cs/chFZiN24E4KMATLdqdvsezGxaGsi4hLGOzlXwp5UZB1LY//20VyM2taTB4QvJ"
+        crossorigin="anonymous"></script> -->
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.0/umd/popper.min.js" integrity="sha384-cs/chFZiN24E4KMATLdqdvsezGxaGsi4hLGOzlXwp5UZB1LY//20VyM2taTB4QvJ"
         crossorigin="anonymous"></script> -->
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/js/bootstrap.min.js" integrity="sha384-uefMccjFJAIv6A+rW+L4AHf99KvxDjWSu1z9VI8SKNVmz4sk7buKt/6v9KI65qnm"
         crossorigin="anonymous"></script>
     <br/>
-
-
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <script>
+    </script>
 
     <div class="container border border-dark rounded bg-light">
         <form>
@@ -42,31 +43,33 @@
                 </div>
                 <hr/>
 
-                <div id="app-4">
-                    <div v-for="todo in todos">
-                        {{ todo.text }}
-                    </div>
-                </div>
-                <!-- <div id="hello-world-app">
+                <div id="vueApp">
+                    <div v-for="m in machines">
+
+
+                        <!-- <div id="hello-world-app">
                     <h1>{{ msg }}</h1>
                 </div> -->
 
 
-                <div class="row">
-                    <div id="RecDeviceDisplay" class="mt-0"></div>
-                </div>
+                        <div class="row">
+                            <div id="RecDeviceDisplay" class="mt-0"></div>
+                        </div>
 
-                <div class="row">
-                    <div class="col-md-10">
-                        <h3>Change Volume</h3>
-                        <b>
-                            Volume:
-                            <input type="range" onchange="changeVolume(this.value)" min="0" max="100" id="volumeSlider"></input>
-                            <input type="text" id="volumeText"></input>
-                        </b>
+                        <div class="row">
+                            <div class="col-md-10">
+                                <h3>Change Volume</h3>
+                                <b>
+                                    {{m.name}}
+                                    <input type="range" v-on:change="changeVolume(m.volume,m.name)" min="0" max="100" v-model="m.volume" id="volumeSlider"></input>
+                                    <input type="text" v-on:change="changeVolume(m.volume,m.name)" id="volumeText" v-model="m.volume"></input>
+                                </b>
+                            </div>
+                        </div>
+
+
                     </div>
                 </div>
-
                 <!-- <div class="row ">
                     <div class="col-md-auto">
                         <button type="button" class="btn btn-primary" onclick="runAnnotation();" id="startBtn" value="Start Audio">
@@ -84,49 +87,77 @@
         </form>
     </div>
     <script>
-        var app4 = new Vue({
-            el: '#app-4',
+        var appData = new Vue({
+            el: '#vueApp',
             data: {
-                todos: [
-                    { text: 'Learn JavaScript' },
-                    { text: 'Learn Vue' },
-                    { text: 'Build something awesome' }
+                machines: [{
+                        name: "home",
+                        volume: 100
+                    },
+                    {
+                        name: "home2",
+                        volume: 100
+                    },
                 ]
-            }
+            },
+            mounted: function () {
+                var self = this;
+                $.get("http://" + window.location.host + "/configuration", function (data) {
+                    let d = JSON.parse(data)
+                    self.machines = d.machines;
+                });
+            },
+            methods: {
+                changeVolume: function (slideValue, machine) {
+                    //  var xhttp = new XMLHttpRequest();
+                    let url = "http://" + window.location.host + "/set-volume?machine=" + machine
+                    // $.post(url, {
+                    //         "volume": slideValue,
+                    //     })
+                    //     .done(function (data) {
+                    //         console.log("update volume response:", data);
+                    //     });
 
+                    $.ajax({
+                        url: url,
+                        data: JSON.stringify({
+                            "volume": slideValue,
+                        }),
+                        dataType: 'json',
+                        type: 'POST',
+                        contentType: 'application/json',
+                        success: response => console.log(response),
+                        error: e => console.log(e)
+                    });
+
+                    // xhttp.onreadystatechange = function () {
+                    //     if (this.readyState == 4 && this.status == 200) {
+                    //         jObj = JSON.parse(this.responseText);
+                    //         document.getElementById("volumeSlider").value = jObj.volume
+                    //         document.getElementById("volumeText").value = jObj.volume
+                    //     }
+                    // };
+                    // //var volumeVal = document.getElementById("volumeSlider").value;
+                    // xhttp.open("POST", ,
+                    //     true);
+                    // xhttp.setRequestHeader("Content-type", "application/json");
+
+
+                    // xhttp.send(JSON.stringify(message));
+                }
+            }
         })
 
-        new Vue({
-            el: "#hello-world-app",
-            data: {
-                msg: "Hello World!"
-            }
-        });
+        // new Vue({
+        //     el: "#hello-world-app",
+        //     data: {
+        //         msg: "Hello World!"
+        //     }
+        // });
     </script>
 
     <script type="text/javascript">
-        document.onload = updateVolume();
-
-        function changeVolume(slideValue) {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
-                    jObj = JSON.parse(this.responseText);
-                    document.getElementById("volumeSlider").value = jObj.volume
-                    document.getElementById("volumeText").value = jObj.volume
-                }
-            };
-            //var volumeVal = document.getElementById("volumeSlider").value;
-            xhttp.open("POST", "http://" + window.location.host + "/set-volume", true);
-            xhttp.setRequestHeader("Content-type", "application/json");
-
-            message = {
-                "volume": slideValue,
-            }
-            xhttp.send(JSON.stringify(message));
-        }
-
-        function updateVolume() {
+        function refreshVolume() {
             var xhttp1 = new XMLHttpRequest();
 
             xhttp1.onreadystatechange = function () {
@@ -140,35 +171,17 @@
             xhttp1.send();
         }
 
-        function runAnnotation() {
-            var text = document.getElementById("inputText").value;
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
-                    document.getElementById("output").value =
-                        this.responseText;
-                }
-            };
+        function getConfiguration() {
 
-            xhttp.open("POST", "http://" + window.location.host + "/extract-symptoms", true);
-            xhttp.setRequestHeader("Content-type", "application/json");
+            // $.ajax({
+            //     url: "http://" + window.location.host + "configuration",
+            //     context: document.body,
+            //     success: function () {
+            //         alert("done");
+            //     }
+            // });
 
-            var age = parseInt(document.getElementById("ageSelector").value);
-            var gender = document.getElementById("genderSelector").value;
-            var laterality = document.getElementById("lateralitySelector").value;
 
-            message = {
-                "text": text,
-                "verify": {
-                    "gender": gender,
-                    "laterality": laterality,
-                    "age": age,
-                    "height": 1.78,
-                    "weight": 80
-                },
-                "actions": ["parse", "verify", "quality"]
-            }
-            xhttp.send(JSON.stringify(message));
         }
     </script>
 </body>

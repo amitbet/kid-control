@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
-	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/amitbet/KidControl/config"
+	ssdp "github.com/koron/go-ssdp"
 
 	"github.com/amitbet/KidControl/logger"
 
@@ -28,68 +32,188 @@ func SendMessage(wr http.ResponseWriter, message map[string]interface{}) {
 func prepareMachineUrl(machine string) string {
 
 	cfg := config.GetDefaultConfig()
-	address := cfg.ServiceAddress
-	if strings.HasPrefix(address, ":") {
-		address = "http://localhost" + address
-	}
+	// address := cfg.ServiceAddress
+	// if strings.HasPrefix(address, ":") {
+	// 	address = "http://localhost" + address
+	// }
 
-	if !strings.HasPrefix(strings.ToLower(address), "http://") {
-		address = "http://" + address
+	// if !strings.HasPrefix(strings.ToLower(address), "http://") {
+	// 	address = "http://" + address
+	// }
+
+	machineUrl := cfg.ServiceList[machine]
+	if !strings.HasSuffix(machineUrl, "/") {
+		machineUrl += "/"
 	}
-	machineIp := cfg.MachineList[machine]
-	u, _ := url.Parse(address)
-	return "http://" + machineIp + ":" + u.Port()
+	return machineUrl
+	//u, _ := url.Parse(address)
+	//return "http://" + machineIp + ":" + u.Port()
 }
 
 func setVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 
+	body, err := ioutil.ReadAll(req.Body)
+	logger.Debug("setVolumeOnMachine got: ", string(body))
+	if err != nil {
+		logger.Error("error in reading req body: ", err)
+	}
+	bodyBuff := bytes.NewBuffer(body)
+	// jObj := map[string]interface{}{}
+	// err = json.Unmarshal(body, &jObj)
+
 	vars := gmux.Vars(req)
 	machine := vars["machine"]
-	if machine == "" {
-		getVolume(wr, req)
-		return
-	}
+	// if machine == "" {
+	// 	getVolume(wr, req)
+	// 	return
+	// }
 	murl := prepareMachineUrl(machine)
 
-	res, err := http.Post(murl+"/set-volume", "application/json", req.Body)
+	res, err := http.Post(murl+"set-volume", "application/json", bodyBuff)
 	if err != nil {
-		logger.Error("setVolumeOnMachine Error getting volume from remote machine: ", err)
+		logger.Error("setVolumeOnMachine Error setting volume from remote machine: ", err)
 		return
 	}
 	if res.StatusCode != 200 {
-		logger.Error("setVolumeOnMachine Error getting volume from remote machine: ", res.StatusCode, res.Status)
+		logger.Error("setVolumeOnMachine Error setting volume from remote machine: ", res.StatusCode, res.Status)
 		return
 	}
 
 }
 
-func getVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
+type AsyncCallResponse struct {
+	Body  []byte
+	Url   string
+	Error error
+}
 
-	vars := gmux.Vars(req)
-	machine := vars["machine"]
-	if machine == "" {
-		getVolume(wr, req)
+func asyncHttpGets(urls []string) []AsyncCallResponse {
+	ch := make(chan AsyncCallResponse, len(urls)) // buffered
+	responses := []AsyncCallResponse{}
+	timeout := time.Duration(4 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
+	}
+
+	for _, url := range urls {
+		go func(url string) {
+			fmt.Printf("Fetching %s \n", url)
+			resp, err := client.Get(url)
+			if err != nil {
+				ch <- AsyncCallResponse{Body: []byte{}, Url: url, Error: err}
+				return
+			}
+			body, err := ioutil.ReadAll(resp.Body)
+			ch <- AsyncCallResponse{Body: body, Url: url, Error: err}
+		}(url)
+	}
+
+	for {
+		select {
+		case r := <-ch:
+			fmt.Printf("%s was fetched\n", r.Url)
+			responses = append(responses, r)
+			if len(responses) == len(urls) {
+				return responses
+			}
+			// case <-time.After(50 * time.Millisecond):
+			// 	fmt.Printf(".")
+		}
+	}
+
+	return responses
+
+}
+
+func sendConfig(wr http.ResponseWriter, req *http.Request) {
+	cfg := config.GetDefaultConfig()
+	clientConfig := map[string]interface{}{
+		"machines": []map[string]interface{}{},
+	}
+	machines := clientConfig["machines"].([]map[string]interface{})
+
+	machineMap := map[string]string{}
+	urls := []string{}
+	for k, _ := range cfg.ServiceList {
+
+		murl := prepareMachineUrl(k) + "/get-volume"
+		machineMap[murl] = k
+		//vol := getMachineVol(k)
+		urls = append(urls, murl)
+	}
+
+	results := asyncHttpGets(urls)
+	for _, result := range results {
+		parsed := map[string]interface{}{}
+		if result.Error != nil {
+			continue
+		}
+		logger.Debug("sendConfig async get volumes got: ", string(result.Body))
+		err := json.Unmarshal(result.Body, &parsed)
+		if err != nil {
+			logger.Error("sendConfig Error in unmarshaling results: ", err)
+			continue
+		}
+		if parsed["volume"] == nil {
+			continue
+		}
+		vol := parsed["volume"].(float64)
+		//	vol, err := strconv.Atoi(volStr)
+
+		machines = append(machines, map[string]interface{}{
+			"name":   machineMap[result.Url],
+			"volume": vol,
+		})
+	}
+
+	clientConfig["machines"] = machines
+	jStr, err := json.Marshal(clientConfig)
+	if err != nil {
+		logger.Error("sendConfig Error in marshaling: ", err)
 		return
+	}
+	_, err = wr.Write(jStr)
+	if err != nil {
+		logger.Error("sendConfig Error in writing config to response: ", err)
+		return
+	}
+}
+func getMachineVol(machine string) int {
+	if machine == "" {
+		machine = "localhost"
+	}
+	timeout := time.Duration(2 * time.Second)
+	client := http.Client{
+		Timeout: timeout,
 	}
 
 	murl := prepareMachineUrl(machine)
 
-	res, err := http.Get(murl + "/get-volume")
+	res, err := client.Get(murl + "get-volume")
 	if err != nil {
 		logger.Error("getVolumeOnMachine Error getting volume from remote machine: ", err)
-		return
+		return -1
 	}
 	if res.StatusCode != 200 {
 		logger.Error("getVolumeOnMachine Error getting volume from remote machine: ", res.StatusCode, res.Status)
-		return
+		return -1
 	}
 
 	jsonStr, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		logger.Error("getVolumeOnMachine Error reading body: ", err)
-		return
+		return -1
 	}
+	jObj := map[string]int{}
+	json.Unmarshal(jsonStr, &jObj)
 
+	return jObj["volume"]
+}
+func getVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
+
+	vars := gmux.Vars(req)
+	machine := vars["machine"]
+	vol := getMachineVol(machine)
 	// jsonRes := map[string]interface{}{}
 	// err = json.Unmarshal(jsonStr, &jsonRes)
 	// if err != nil {
@@ -97,13 +221,13 @@ func getVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 	// 	return
 	// }
 	// vol := jsonRes["volume"].(int)
-	// jObj := map[string]interface{}{
-	// 	"volume": vol,
-	// }
-	//SendMessage(wr, jObj)
-	logger.Debugf("getVolumeOnMachine relay: %d\n", string(jsonStr))
+	jObj := map[string]interface{}{
+		"volume": vol,
+	}
+	SendMessage(wr, jObj)
+	//logger.Debugf("getVolumeOnMachine relay: %d\n", string(jsonStr))
 
-	wr.Write(jsonStr)
+	//wr.Write(jsonStr)
 }
 func getVolume(wr http.ResponseWriter, req *http.Request) {
 	vol, err := volume.GetVolume()
@@ -148,21 +272,145 @@ func setVolume(wr http.ResponseWriter, req *http.Request) {
 	logger.Debugf("sending volume back: %d\n", vol)
 }
 
+func ssdpAdvertise(quit chan bool) {
+	myIp := getHostIp().String()
+	hname, err := os.Hostname()
+	if err != nil {
+		logger.Error("Error getting hostname: ", err)
+	}
+
+	ad, err := ssdp.Advertise(
+		"urn:schemas-upnp-org:service:KidControl:1", // send as "ST"
+		"id:"+hname,                                 // send as "USN"
+		"http://"+myIp+":7777/",                     // send as "LOCATION"
+		"ssdp for KidControl",                       // send as "SERVER"
+		3600) // send as "maxAge" in "CACHE-CONTROL"
+	if err != nil {
+		logger.Error("Error advertising ssdp: ", err)
+	}
+
+	//aliveTick := time.Tick(5 * time.Second)
+
+	// run Advertiser infinitely.
+	for {
+		select {
+		//case <-aliveTick:
+		//ad.Alive()
+		case <-quit:
+			// send/multicast "byebye" message.
+			ad.Bye()
+			// teminate Advertiser.
+			ad.Close()
+			return
+		}
+	}
+}
+func ssdpSearch(searchType string, waitTime int, multicastSendAddress string, listenAddress string) []ssdp.Service {
+	// if multicastSendAddress != "" {
+	// 	err := ssdp.SetMulticastSendAddrIPv4(multicastSendAddress)
+	// 	if err != nil {
+	// 		logger.Error("Error setting multicast address: ", err)
+	// 	}
+	// }
+
+	list, err := ssdp.Search(searchType, waitTime, listenAddress)
+	if err != nil {
+		logger.Error("Error while searching ssdp: ", err)
+	}
+	for i, srv := range list {
+		//fmt.Printf("%d: %#v\n", i, srv)
+		fmt.Printf("%d: %s %s\n", i, srv.Type, srv.Location)
+	}
+	return list
+}
+
+// func ssdpServer() {
+// 	hname, err := os.Hostname()
+// 	if err != nil {
+// 		logger.Error("Error getting hostname: ", err)
+// 	}
+
+// 	s, err := gossdp.NewSsdp(nil)
+// 	if err != nil {
+// 		logger.Error("Error creating ssdp server: ", err)
+// 		return
+// 	}
+// 	defer s.Stop()
+// 	go s.Start()
+
+// 	serverDef := gossdp.AdvertisableServer{
+// 		ServiceType: "urn:kidcontrol:test:web:1",
+// 		DeviceUuid:  hname, //"hh0c2981-0029-44b7-4u04-27f187aecf78",
+// 		Location:    "http://192.168.1.1:8080",
+// 		MaxAge:      3600,
+// 	}
+// 	s.AdvertiseServer(serverDef)
+// 	time.Sleep(5 * time.Second)
+// }
+
+// type blah struct {
+// }
+
+// func (b blah) NotifyAlive(message gossdp.AliveMessage) {
+// 	logger.Debug("NotifyAlive %#v\n", message)
+// }
+// func (b blah) NotifyBye(message gossdp.ByeMessage) {
+// 	logger.Debug("NotifyBye %#v\n", message)
+// }
+// func (b blah) Response(message gossdp.ResponseMessage) {
+// 	logger.Debug("Response %#v\n", message)
+// }
+
+// func ssdpClient() {
+// 	b := blah{}
+// 	c, err := gossdp.NewSsdpClient(b)
+// 	if err != nil {
+// 		logger.Error("Failed to start client: ", err)
+// 		return
+// 	}
+// 	//defer c.Stop()
+// 	go c.Start()
+
+// 	err = c.ListenFor("urn:kidcontrol:test:web:1")
+
+// 	//.time.Sleep(15 * time.Second)
+// }
+func getHostIp() net.IP {
+	host, _ := os.Hostname()
+	addrs, _ := net.LookupIP(host)
+
+	for _, addr := range addrs {
+		if ipv4 := addr.To4(); ipv4 != nil && ipv4[0] == 192 {
+			return ipv4
+			//fmt.Println("IPv4: ", ipv4)
+		}
+	}
+	return net.IP{}
+}
+
 func main() {
 	fmt.Println("starting!")
+	quit := make(chan bool)
 
+	go ssdpAdvertise(quit)
+
+	ssdpSearch("urn:schemas-upnp-org:service:KidControl:1", 5, "", "")
+	//ssdpServer()
+	//ssdpClient()
 	mux := gmux.NewRouter() //.StrictSlash(true)
 
 	cfg := config.GetDefaultConfig()
+	mux.HandleFunc("/set-volume", setVolumeOnMachine).Queries("machine", "{machine}")
 	mux.HandleFunc("/set-volume", setVolume)
 	mux.HandleFunc("/get-volume", getVolumeOnMachine).Queries("machine", "{machine}")
 	mux.HandleFunc("/get-volume", getVolume)
+	mux.HandleFunc("/configuration", sendConfig)
+
 	//mux.HandleFunc("/get-volume", getVolumeOnMachine)
 	mux.PathPrefix("/").Handler(http.FileServer(http.Dir("./public")))
-	logger.Info("Listening on address: ", cfg.ServiceAddress)
-	err := http.ListenAndServe(cfg.ServiceAddress, mux)
+	logger.Info("Listening on address: ", cfg.ListeningAddress)
+	err := http.ListenAndServe(cfg.ListeningAddress, mux)
 	if err != nil {
 		logger.Errorf("lisgtening error: ", err)
 	}
-
 }
