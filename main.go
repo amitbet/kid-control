@@ -32,22 +32,12 @@ func SendMessage(wr http.ResponseWriter, message map[string]interface{}) {
 func prepareMachineUrl(machine string) string {
 
 	cfg := config.GetDefaultConfig()
-	// address := cfg.ServiceAddress
-	// if strings.HasPrefix(address, ":") {
-	// 	address = "http://localhost" + address
-	// }
-
-	// if !strings.HasPrefix(strings.ToLower(address), "http://") {
-	// 	address = "http://" + address
-	// }
 
 	machineUrl := cfg.ServiceList[machine]
 	if !strings.HasSuffix(machineUrl, "/") {
 		machineUrl += "/"
 	}
 	return machineUrl
-	//u, _ := url.Parse(address)
-	//return "http://" + machineIp + ":" + u.Port()
 }
 
 func setVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
@@ -58,15 +48,9 @@ func setVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 		logger.Error("error in reading req body: ", err)
 	}
 	bodyBuff := bytes.NewBuffer(body)
-	// jObj := map[string]interface{}{}
-	// err = json.Unmarshal(body, &jObj)
 
 	vars := gmux.Vars(req)
 	machine := vars["machine"]
-	// if machine == "" {
-	// 	getVolume(wr, req)
-	// 	return
-	// }
 	murl := prepareMachineUrl(machine)
 
 	res, err := http.Post(murl+"set-volume", "application/json", bodyBuff)
@@ -138,7 +122,6 @@ func sendConfig(wr http.ResponseWriter, req *http.Request) {
 
 		murl := prepareMachineUrl(k) + "/get-volume"
 		machineMap[murl] = k
-		//vol := getMachineVol(k)
 		urls = append(urls, murl)
 	}
 
@@ -214,21 +197,12 @@ func getVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 	vars := gmux.Vars(req)
 	machine := vars["machine"]
 	vol := getMachineVol(machine)
-	// jsonRes := map[string]interface{}{}
-	// err = json.Unmarshal(jsonStr, &jsonRes)
-	// if err != nil {
-	// 	logger.Error("getVolumeOnMachine Error unmarshaling json: ", err)
-	// 	return
-	// }
-	// vol := jsonRes["volume"].(int)
 	jObj := map[string]interface{}{
 		"volume": vol,
 	}
 	SendMessage(wr, jObj)
-	//logger.Debugf("getVolumeOnMachine relay: %d\n", string(jsonStr))
-
-	//wr.Write(jsonStr)
 }
+
 func getVolume(wr http.ResponseWriter, req *http.Request) {
 	vol, err := volume.GetVolume()
 	if err != nil {
@@ -252,7 +226,6 @@ func setVolume(wr http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		logger.Error("setVolume, error in unmarshaling body: ", err)
 	}
-	// logger.Debugf("extractPatientSymptoms unmarshaled obj: %v", jObj)
 
 	volStr := jObj["volume"].(string)
 	vol, err := strconv.Atoi(volStr)
@@ -306,12 +279,6 @@ func ssdpAdvertise(quit chan bool) {
 	}
 }
 func ssdpSearch(searchType string, waitTime int, multicastSendAddress string, listenAddress string) []ssdp.Service {
-	// if multicastSendAddress != "" {
-	// 	err := ssdp.SetMulticastSendAddrIPv4(multicastSendAddress)
-	// 	if err != nil {
-	// 		logger.Error("Error setting multicast address: ", err)
-	// 	}
-	// }
 
 	list, err := ssdp.Search(searchType, waitTime, listenAddress)
 	if err != nil {
@@ -406,7 +373,6 @@ func main() {
 	mux.HandleFunc("/get-volume", getVolume)
 	mux.HandleFunc("/configuration", sendConfig)
 
-	//mux.HandleFunc("/get-volume", getVolumeOnMachine)
 	mux.PathPrefix("/").Handler(http.FileServer(http.Dir("./public")))
 	logger.Info("Listening on address: ", cfg.ListeningAddress)
 	err := http.ListenAndServe(cfg.ListeningAddress, mux)
