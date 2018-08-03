@@ -1,8 +1,8 @@
 package config
 
 type Config struct {
-	ListeningAddress string
-	ServiceList      map[string]string
+	ListeningAddress string            `"json:listeningAddress"`
+	ServiceList      map[string]string `"json:serviceList"`
 }
 
 func GetDefaultConfig() *Config {

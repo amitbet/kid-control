@@ -74,13 +74,13 @@ type AsyncCallResponse struct {
 func asyncHttpGets(urls []string) []AsyncCallResponse {
 	ch := make(chan AsyncCallResponse, len(urls)) // buffered
 	responses := []AsyncCallResponse{}
-	timeout := time.Duration(4 * time.Second)
-	client := http.Client{
-		Timeout: timeout,
-	}
 
 	for _, url := range urls {
 		go func(url string) {
+			timeout := time.Duration(2 * time.Second)
+			client := http.Client{
+				Timeout: timeout,
+			}
 			fmt.Printf("Fetching %s \n", url)
 			resp, err := client.Get(url)
 			if err != nil {
@@ -131,7 +131,7 @@ func sendConfig(wr http.ResponseWriter, req *http.Request) {
 		if result.Error != nil {
 			continue
 		}
-		logger.Debug("sendConfig async get volumes got: ", string(result.Body))
+		//logger.Debug("sendConfig async get volumes got: ", string(result.Body))
 		err := json.Unmarshal(result.Body, &parsed)
 		if err != nil {
 			logger.Error("sendConfig Error in unmarshaling results: ", err)
