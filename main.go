@@ -2,17 +2,23 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/amitbet/KidControl/config"
+	"github.com/grandcat/zeroconf"
 	ssdp "github.com/koron/go-ssdp"
 
 	"github.com/amitbet/KidControl/logger"
@@ -109,6 +115,13 @@ func asyncHttpGets(urls []string) []AsyncCallResponse {
 
 }
 
+// NameSorter sorts planets by name.
+type NameSorter []map[string]interface{}
+
+func (a NameSorter) Len() int           { return len(a) }
+func (a NameSorter) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a NameSorter) Less(i, j int) bool { return a[i]["name"].(string) < a[j]["name"].(string) }
+
 func sendConfig(wr http.ResponseWriter, req *http.Request) {
 	cfg := config.GetDefaultConfig()
 	clientConfig := map[string]interface{}{
@@ -147,6 +160,7 @@ func sendConfig(wr http.ResponseWriter, req *http.Request) {
 			"name":   machineMap[result.Url],
 			"volume": vol,
 		})
+		sort.Sort(NameSorter(machines))
 	}
 
 	clientConfig["machines"] = machines
@@ -262,14 +276,15 @@ func ssdpAdvertise(quit chan bool) {
 		logger.Error("Error advertising ssdp: ", err)
 	}
 
-	//aliveTick := time.Tick(5 * time.Second)
+	aliveTick := time.Tick(5 * time.Second)
 
 	// run Advertiser infinitely.
 	for {
 		select {
-		//case <-aliveTick:
-		//ad.Alive()
+		case <-aliveTick:
+			ad.Alive()
 		case <-quit:
+			logger.Info("Closing ssdp service")
 			// send/multicast "byebye" message.
 			ad.Bye()
 			// teminate Advertiser.
@@ -278,7 +293,7 @@ func ssdpAdvertise(quit chan bool) {
 		}
 	}
 }
-func ssdpSearch(searchType string, waitTime int, multicastSendAddress string, listenAddress string) []ssdp.Service {
+func ssdpSearch(searchType string, waitTime int, listenAddress string) []ssdp.Service {
 
 	list, err := ssdp.Search(searchType, waitTime, listenAddress)
 	if err != nil {
@@ -291,57 +306,6 @@ func ssdpSearch(searchType string, waitTime int, multicastSendAddress string, li
 	return list
 }
 
-// func ssdpServer() {
-// 	hname, err := os.Hostname()
-// 	if err != nil {
-// 		logger.Error("Error getting hostname: ", err)
-// 	}
-
-// 	s, err := gossdp.NewSsdp(nil)
-// 	if err != nil {
-// 		logger.Error("Error creating ssdp server: ", err)
-// 		return
-// 	}
-// 	defer s.Stop()
-// 	go s.Start()
-
-// 	serverDef := gossdp.AdvertisableServer{
-// 		ServiceType: "urn:kidcontrol:test:web:1",
-// 		DeviceUuid:  hname, //"hh0c2981-0029-44b7-4u04-27f187aecf78",
-// 		Location:    "http://192.168.1.1:8080",
-// 		MaxAge:      3600,
-// 	}
-// 	s.AdvertiseServer(serverDef)
-// 	time.Sleep(5 * time.Second)
-// }
-
-// type blah struct {
-// }
-
-// func (b blah) NotifyAlive(message gossdp.AliveMessage) {
-// 	logger.Debug("NotifyAlive %#v\n", message)
-// }
-// func (b blah) NotifyBye(message gossdp.ByeMessage) {
-// 	logger.Debug("NotifyBye %#v\n", message)
-// }
-// func (b blah) Response(message gossdp.ResponseMessage) {
-// 	logger.Debug("Response %#v\n", message)
-// }
-
-// func ssdpClient() {
-// 	b := blah{}
-// 	c, err := gossdp.NewSsdpClient(b)
-// 	if err != nil {
-// 		logger.Error("Failed to start client: ", err)
-// 		return
-// 	}
-// 	//defer c.Stop()
-// 	go c.Start()
-
-// 	err = c.ListenFor("urn:kidcontrol:test:web:1")
-
-// 	//.time.Sleep(15 * time.Second)
-// }
 func getHostIp() net.IP {
 	host, _ := os.Hostname()
 	addrs, _ := net.LookupIP(host)
@@ -354,19 +318,105 @@ func getHostIp() net.IP {
 	}
 	return net.IP{}
 }
+func zconfRegister(quit chan bool) {
+	myIp := getHostIp().String()
+	hname, err := os.Hostname()
+	meta := []string{
+		"version=0.1.0",
+		"ip=" + myIp,
+	}
+	if hname == "" {
+		hname = myIp
+	}
+
+	service, err := zeroconf.Register(
+		hname,              // service instance name
+		"vol-control._tcp", // service type and protocol
+		"local.",           // service domain
+		7777,               // service port
+		meta,               // service metadata
+		nil,                // register on all network interfaces
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	select {
+	case <-quit:
+		logger.Info("stopping zeroconf publishing server")
+		return
+	}
+	defer service.Shutdown()
+	logger.Info("stopping zeroconf publishing server")
+}
+
+func zconfDiscover(serviceMap map[string]string) {
+	resolver, err := zeroconf.NewResolver(nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Channel to receive discovered service entries
+	entries := make(chan *zeroconf.ServiceEntry)
+
+	go func(results <-chan *zeroconf.ServiceEntry) {
+		for entry := range results {
+			logger.Debugf("Found service:, %s desc: %v address: %v:%s", entry.Instance, entry.Text, entry.AddrIPv4, strconv.Itoa(entry.Port))
+			svcInstance := strings.ToLower(entry.Instance)
+			var ip string
+			for _, prop := range entry.Text {
+				if strings.HasPrefix(prop, "ip=") {
+					ip = prop[3:]
+				}
+			}
+			if ip == "" {
+				ip = entry.AddrIPv4[0].String()
+			}
+			svcUrl := "http://" + ip + ":" + strconv.Itoa(entry.Port) + "/"
+			logger.Debugf("instance: %s svcUrl: %s", svcInstance, svcUrl)
+			serviceMap[svcInstance] = svcUrl
+		}
+	}(entries)
+
+	ctx := context.Background()
+
+	err = resolver.Browse(ctx, "vol-control._tcp", "local.", entries)
+	if err != nil {
+		log.Fatalln("Failed to browse:", err.Error())
+	}
+
+	<-ctx.Done()
+}
 
 func main() {
 	fmt.Println("starting!")
+	cfg := config.GetDefaultConfig()
+	var sigTerm = make(chan os.Signal)
 	quit := make(chan bool)
+	signal.Notify(sigTerm, syscall.SIGTERM)
+	signal.Notify(sigTerm, syscall.SIGINT)
+	go func() {
+		sig := <-sigTerm
+		fmt.Printf("caught sig: %+v\n", sig)
+		fmt.Println("Waiting for a second to finish processing")
+		quit <- true
+		time.Sleep(1 * time.Second)
+		os.Exit(0)
+	}()
+
+	//go zconfRegister(quit)
+	//go zconfDiscover(cfg.ServiceList)
 
 	go ssdpAdvertise(quit)
+	svcList := ssdpSearch("urn:schemas-upnp-org:service:KidControl:1", 5, "")
+	for _, svc := range svcList {
+		svcName := svc.USN[3:]
+		svcUrl := svc.Location
+		cfg.ServiceList[strings.ToLower(svcName)] = svcUrl
+	}
 
-	ssdpSearch("urn:schemas-upnp-org:service:KidControl:1", 5, "", "")
-	//ssdpServer()
-	//ssdpClient()
 	mux := gmux.NewRouter() //.StrictSlash(true)
 
-	cfg := config.GetDefaultConfig()
 	mux.HandleFunc("/set-volume", setVolumeOnMachine).Queries("machine", "{machine}")
 	mux.HandleFunc("/set-volume", setVolume)
 	mux.HandleFunc("/get-volume", getVolumeOnMachine).Queries("machine", "{machine}")
@@ -377,6 +427,6 @@ func main() {
 	logger.Info("Listening on address: ", cfg.ListeningAddress)
 	err := http.ListenAndServe(cfg.ListeningAddress, mux)
 	if err != nil {
-		logger.Errorf("lisgtening error: ", err)
+		logger.Errorf("listening error: ", err)
 	}
 }
