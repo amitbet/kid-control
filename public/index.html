@@ -68,10 +68,7 @@
         var appData = new Vue({
             el: '#vueApp',
             data: {
-                machines: [{
-                        name: "localhost",
-                        volume: 100
-                    },
+                machines: [,
                 ]
             },
             mounted: function () {
@@ -79,6 +76,15 @@
                 $.get("http://" + window.location.host + "/configuration", function (data) {
                     let d = JSON.parse(data)
                     self.machines = d.machines;
+                    if (self.machines.length == 0){
+                        $.get("http://" + window.location.host + "/get-volume", function (data) {
+                            let d1 = JSON.parse(data)
+                            self.machines = [{
+                                name: "localhost",
+                                volume: d1.volume
+                            }];
+                        });
+                    }
                 });
             },
             methods: {

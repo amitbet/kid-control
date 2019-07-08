@@ -23,8 +23,8 @@ import (
 
 	"github.com/amitbet/KidControl/logger"
 
+	"github.com/amitbet/volume-go"
 	gmux "github.com/gorilla/mux"
-	"github.com/itchyny/volume-go"
 )
 
 func SendMessage(wr http.ResponseWriter, message map[string]interface{}) {
@@ -32,9 +32,10 @@ func SendMessage(wr http.ResponseWriter, message map[string]interface{}) {
 	if err != nil {
 		logger.Errorf("SendMessage failed: %+v", err)
 	}
-
+ 
 	wr.Write([]byte(jsonStr))
 }
+
 func prepareMachineUrl(machine string) string {
 
 	cfg := config.GetDefaultConfig()
@@ -58,7 +59,25 @@ func setVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 	vars := gmux.Vars(req)
 	machine := vars["machine"]
 	murl := prepareMachineUrl(machine)
+	if machine == "localhost" || machine == "127.0.0.1" {
+		parsed := map[string]interface{}{}
+		err := json.Unmarshal(body, &parsed)
+		volStr := parsed["volume"].(string)
+		vol, err := strconv.Atoi(volStr)
 
+		err = volume.SetVolume(vol)
+		if err != nil {
+			logger.Errorf("set volume failed: %+v", err)
+		}
+		logger.Debugf("set volume success val=%d", vol)
+
+		jObj1 := map[string]interface{}{
+			"volume": vol,
+		}
+		SendMessage(wr, jObj1)
+		logger.Debugf("sending volume back: %d\n", vol)
+		return
+	}
 	res, err := http.Post(murl+"set-volume", "application/json", bodyBuff)
 	if err != nil {
 		logger.Error("setVolumeOnMachine Error setting volume from remote machine: ", err)
@@ -218,15 +237,15 @@ func getVolumeOnMachine(wr http.ResponseWriter, req *http.Request) {
 }
 
 func getVolume(wr http.ResponseWriter, req *http.Request) {
-	vol, err := volume.GetVolume()
-	if err != nil {
-		logger.Errorf("get volume failed: %+v", err)
-	}
+	// vol, err := volume.GetVolume()
+	// if err != nil {
+	// 	logger.Errorf("get volume failed: %+v", err)
+	// }
 	jObj := map[string]interface{}{
-		"volume": vol,
+		"volume": localVol,
 	}
 	SendMessage(wr, jObj)
-	logger.Debugf("sending volume: %d\n", vol)
+	logger.Debugf("sending volume: %d\n", localVol)
 }
 
 func setVolume(wr http.ResponseWriter, req *http.Request) {
@@ -268,10 +287,10 @@ func ssdpAdvertise(quit chan bool) {
 
 	ad, err := ssdp.Advertise(
 		"urn:schemas-upnp-org:service:KidControl:1", // send as "ST"
-		"id:"+hname,                                 // send as "USN"
-		"http://"+myIp+":7777/",                     // send as "LOCATION"
-		"ssdp for KidControl",                       // send as "SERVER"
-		3600) // send as "maxAge" in "CACHE-CONTROL"
+		"id:"+hname,             // send as "USN"
+		"http://"+myIp+":7777/", // send as "LOCATION"
+		"ssdp for KidControl",   // send as "SERVER"
+		3600)                    // send as "maxAge" in "CACHE-CONTROL"
 	if err != nil {
 		logger.Error("Error advertising ssdp: ", err)
 	}
@@ -388,7 +407,25 @@ func zconfDiscover(serviceMap map[string]string) {
 	<-ctx.Done()
 }
 
+var volPollTimer *time.Timer
+var localVol int
+
+func pollVolume() {
+	var err error
+	volPollTimer = time.NewTimer(time.Second)
+	go func() {
+		for {
+			<-volPollTimer.C
+			localVol, err = volume.GetVolume()
+			if err != nil {
+				logger.Errorf("listening error: ", err)
+			}
+		}
+	}()
+}
+
 func main() {
+	pollVolume()
 	fmt.Println("starting!")
 	cfg := config.GetDefaultConfig()
 	var sigTerm = make(chan os.Signal)
