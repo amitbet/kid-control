@@ -32,7 +32,7 @@ func SendMessage(wr http.ResponseWriter, message map[string]interface{}) {
 	if err != nil {
 		logger.Errorf("SendMessage failed: %+v", err)
 	}
- 
+
 	wr.Write([]byte(jsonStr))
 }
 
@@ -407,12 +407,12 @@ func zconfDiscover(serviceMap map[string]string) {
 	<-ctx.Done()
 }
 
-var volPollTimer *time.Timer
+var volPollTimer *time.Ticker
 var localVol int
 
 func pollVolume() {
 	var err error
-	volPollTimer = time.NewTimer(time.Second)
+	volPollTimer = time.NewTicker(time.Second)
 	go func() {
 		for {
 			<-volPollTimer.C
